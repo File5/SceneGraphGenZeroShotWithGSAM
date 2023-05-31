@@ -1,11 +1,13 @@
 #!/bin/bash
 
+input_image=${1:-assets/demo.jpg}
+
 export CUDA_VISIBLE_DEVICES=0
 python scene_graph_gen.py \
   --config GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py \
   --grounded_checkpoint weights/groundingdino_swint_ogc.pth \
   --sam_checkpoint weights/sam_vit_h_4b8939.pth \
-  --input_image assets/demo.jpg \
+  --input_image "$input_image" \
   --output_dir "outputs" \
   --box_threshold 0.25 \
   --text_threshold 0.2 \

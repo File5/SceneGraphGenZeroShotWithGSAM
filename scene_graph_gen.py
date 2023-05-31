@@ -87,6 +87,20 @@ def graph_to_json(output_dir,graph):
     with open(os.path.join(output_dir, "scenegraph.json"), "w") as file:
         json.dump(graph_json, file, separators=(',',':'))
 
+def graph_to_json2(output_dir,graph,file_base_name):
+    graph_json = {"class": "GraphLinksModel", "nodeDataArray": [], "linkDataArray": [], "relations": []}
+    objs_name = [i["head"] for i in graph['entities']]
+    for obj in objs_name:
+        graph_json["nodeDataArray"].append({"key":obj,"color":"#ec8c69","type":"obj"})
+    for rel in [i["relation"] for i in graph['relations']]:
+        graph_json["nodeDataArray"].append({"key":rel, "color":"yellow","type":"rel"})
+
+    for relation in graph['relations']:
+        graph_json["linkDataArray"].append({"from":objs_name[relation["subject"]], "to":relation["relation"]})
+        graph_json["linkDataArray"].append({"from":relation["relation"], "to":objs_name[relation["object"]]})
+        graph_json["relations"].append({"s": objs_name[relation["subject"]], "p": relation["relation"], "o": objs_name[relation["object"]]})
+    with open(os.path.join(output_dir, "sgg", file_base_name + ".json"), "w") as file:
+        json.dump(graph_json, file, separators=(',',':'))
 
 
 # def generate_tags(caption, split=',', max_tokens=100, model="gpt-3.5-turbo"):
@@ -194,7 +208,7 @@ def show_box(box, ax, label):
 
 
 
-def save_mask_data(output_dir, caption, mask_list, box_list, label_list):
+def save_mask_data(output_dir, caption, mask_list, box_list, label_list, file_base_name):
     value = 0  # 0 for background
 
     mask_img = torch.zeros(mask_list.shape[-2:])
@@ -222,7 +236,7 @@ def save_mask_data(output_dir, caption, mask_list, box_list, label_list):
             'logit': float(logit),
             'box': box.numpy().tolist(),
         })
-    with open(os.path.join(output_dir, 'label.json'), 'w') as f:
+    with open(os.path.join(output_dir, 'sgg', file_base_name + '_label.json'), 'w') as f:
         json.dump(json_data, f)
 
 
@@ -236,6 +250,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--sam_checkpoint", type=str, required=True, help="path to checkpoint file"
     )
+    # now it's input image folder
     parser.add_argument("--input_image", type=str, required=True, help="path to image file")
     parser.add_argument("--split", default=",", type=str, help="split for text prompt")
     # parser.add_argument("--openai_key", type=str, required=True, help="key for chatgpt")
@@ -272,12 +287,12 @@ if __name__ == "__main__":
     # make dir
     os.makedirs(output_dir, exist_ok=True)
     # load image
-    image_pil, image = load_image(image_path)
+    #image_pil, image = load_image(image_path)
     # load model
     model = load_model(config_file, grounded_checkpoint, device=device)
 
     # visualize raw image
-    image_pil.save(os.path.join(output_dir, "raw_image.jpg"))
+    #image_pil.save(os.path.join(output_dir, "raw_image.jpg"))
 
     # generate caption and tags
     # use Tag2Text can generate better captions
@@ -295,63 +310,72 @@ if __name__ == "__main__":
     blip_model, processor, _ = load_model_and_preprocess(
         name="blip_caption", model_type="base_coco", is_eval=True, device=blip_device
     )
-    caption = generate_caption(image_pil, device=blip_device)
-    print(f"Caption: {caption}")
     # Currently ", " is better for detecting single tags
     # while ". " is a little worse in some case
-    text_prompt, scene_graph = generate_tags(caption, split=split)
-    print(f"Tags: {text_prompt}")
 
-    # run grounding dino model
-    boxes_filt, scores, pred_phrases = get_grounding_output(
-        model, image, text_prompt, box_threshold, text_threshold, device=device
-    )
 
     # initialize SAM
-    predictor = SamPredictor(build_sam(checkpoint=sam_checkpoint).to(device))
-    image = cv2.imread(image_path)
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    predictor.set_image(image)
+    sam = build_sam(checkpoint=sam_checkpoint).to(device)
 
-    size = image_pil.size
-    H, W = size[1], size[0]
-    for i in range(boxes_filt.size(0)):
-        boxes_filt[i] = boxes_filt[i] * torch.Tensor([W, H, W, H])
-        boxes_filt[i][:2] -= boxes_filt[i][2:] / 2
-        boxes_filt[i][2:] += boxes_filt[i][:2]
+    for file_name in os.listdir(image_path):
+        image_pil, image = load_image(os.path.join(image_path, file_name))
 
-    boxes_filt = boxes_filt.cpu()
-    # use NMS to handle overlapped boxes
-    print(f"Before NMS: {boxes_filt.shape[0]} boxes")
-    nms_idx = torchvision.ops.nms(boxes_filt, scores, iou_threshold).numpy().tolist()
-    boxes_filt = boxes_filt[nms_idx]
-    pred_phrases = [pred_phrases[idx] for idx in nms_idx]
-    print(f"After NMS: {boxes_filt.shape[0]} boxes")
-    # caption = check_caption(caption, pred_phrases)
-    # print(f"Revise caption with number: {caption}")
+        caption = generate_caption(image_pil, device=blip_device)
+        print(f"Caption: {caption}")
 
-    transformed_boxes = predictor.transform.apply_boxes_torch(boxes_filt, image.shape[:2]).to(device)
+        text_prompt, scene_graph = generate_tags(caption, split=split)
+        print(f"Tags: {text_prompt}")
 
-    masks, _, _ = predictor.predict_torch(
-        point_coords=None,
-        point_labels=None,
-        boxes=transformed_boxes.to(device),
-        multimask_output=False,
-    )
+        # run grounding dino model
+        boxes_filt, scores, pred_phrases = get_grounding_output(
+            model, image, text_prompt, box_threshold, text_threshold, device=device
+        )
 
-    # draw output image
-    plt.figure(figsize=(10, 10))
-    plt.imshow(image)
-    for mask in masks:
-        show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
-    for box, label in zip(boxes_filt, pred_phrases):
-        show_box(box.numpy(), plt.gca(), label)
+        predictor = SamPredictor(sam)
+        image = cv2.imread(os.path.join(image_path, file_name))
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        predictor.set_image(image)
 
-    plt.title(caption)
-    plt.axis('off')
-    plt.savefig(
-        os.path.join(output_dir, "automatic_label_output.jpg"),
-        bbox_inches="tight", dpi=300, pad_inches=0.0
-    )
-    graph_to_json(output_dir, scene_graph)
-    save_mask_data(output_dir, caption, masks, boxes_filt, pred_phrases)
+        size = image_pil.size
+        H, W = size[1], size[0]
+        for i in range(boxes_filt.size(0)):
+            boxes_filt[i] = boxes_filt[i] * torch.Tensor([W, H, W, H])
+            boxes_filt[i][:2] -= boxes_filt[i][2:] / 2
+            boxes_filt[i][2:] += boxes_filt[i][:2]
+
+        boxes_filt = boxes_filt.cpu()
+        # use NMS to handle overlapped boxes
+        print(f"Before NMS: {boxes_filt.shape[0]} boxes")
+        nms_idx = torchvision.ops.nms(boxes_filt, scores, iou_threshold).numpy().tolist()
+        boxes_filt = boxes_filt[nms_idx]
+        pred_phrases = [pred_phrases[idx] for idx in nms_idx]
+        print(f"After NMS: {boxes_filt.shape[0]} boxes")
+        # caption = check_caption(caption, pred_phrases)
+        # print(f"Revise caption with number: {caption}")
+
+        transformed_boxes = predictor.transform.apply_boxes_torch(boxes_filt, image.shape[:2]).to(device)
+
+        masks, _, _ = predictor.predict_torch(
+            point_coords=None,
+            point_labels=None,
+            boxes=transformed_boxes.to(device),
+            multimask_output=False,
+        )
+
+        # draw output image
+        plt.figure(figsize=(10, 10))
+        plt.imshow(image)
+        for mask in masks:
+            show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
+        for box, label in zip(boxes_filt, pred_phrases):
+            show_box(box.numpy(), plt.gca(), label)
+
+        plt.title(caption)
+        plt.axis('off')
+        plt.savefig(
+            os.path.join(output_dir, "automatic_label_output.jpg"),
+            bbox_inches="tight", dpi=300, pad_inches=0.0
+        )
+        file_base_name = os.path.splitext(file_name)[0]
+        graph_to_json2(output_dir, scene_graph, file_base_name)
+        save_mask_data(output_dir, caption, masks, boxes_filt, pred_phrases, file_base_name)
