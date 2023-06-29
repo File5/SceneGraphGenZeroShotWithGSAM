@@ -318,6 +318,12 @@ if __name__ == "__main__":
     sam = build_sam(checkpoint=sam_checkpoint).to(device)
 
     for file_name in os.listdir(image_path):
+        file_base_name = os.path.splitext(file_name)[0]
+        out_label_file = os.path.join(output_dir, 'sgg', file_base_name + '_label.json')
+        out_file = os.path.join(output_dir, "sgg", file_base_name + ".json")
+        if os.path.exists(out_label_file) and os.path.exists(out_file):
+            continue
+
         image_pil, image = load_image(os.path.join(image_path, file_name))
 
         caption = generate_caption(image_pil, device=blip_device)
@@ -376,6 +382,5 @@ if __name__ == "__main__":
             os.path.join(output_dir, "automatic_label_output.jpg"),
             bbox_inches="tight", dpi=300, pad_inches=0.0
         )
-        file_base_name = os.path.splitext(file_name)[0]
         graph_to_json2(output_dir, scene_graph, file_base_name)
         save_mask_data(output_dir, caption, masks, boxes_filt, pred_phrases, file_base_name)

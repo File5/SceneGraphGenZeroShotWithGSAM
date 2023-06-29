@@ -9,7 +9,7 @@ python scene_graph_gen.py \
   --sam_checkpoint weights/sam_vit_h_4b8939.pth \
   --input_image "$input_image" \
   --output_dir "outputs" \
-  --box_threshold 0.25 \
-  --text_threshold 0.2 \
-  --iou_threshold 0.5  \
-  --device "cpu"
+  --box_threshold 0.15 \
+  --text_threshold 0.1 \
+  --iou_threshold 0.25  \
+  --device "cuda"
